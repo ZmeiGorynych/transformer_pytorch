@@ -46,9 +46,12 @@ class MultiHeadAttention(nn.Module):
         mb_size, len_v, d_model = v.size()
 
         # treat as a (n_head) size batch
-        q_s = q.repeat(n_head, 1, 1).view(n_head, -1, d_model) # n_head x (mb_size*len_q) x d_model
-        k_s = k.repeat(n_head, 1, 1).view(n_head, -1, d_model) # n_head x (mb_size*len_k) x d_model
-        v_s = v.repeat(n_head, 1, 1).view(n_head, -1, d_model) # n_head x (mb_size*len_v) x d_model
+        q_s = q.repeat(n_head, 1, 1).view(n_head, -1, d_model)  # n_head x (mb_size*len_q) x d_model
+        k_s = k.repeat(n_head, 1, 1).view(n_head, -1, d_model)  # n_head x (mb_size*len_k) x d_model
+        v_s = v.repeat(n_head, 1, 1).view(n_head, -1, d_model)  # n_head x (mb_size*len_v) x d_model
+        #q_s = q.expand(n_head*mb_size, len_q, d_model).view(n_head, -1, d_model)  # n_head x (mb_size*len_q) x d_model
+        # k_s = k.expand(n_head*mb_size, len_k, d_model).view(n_head, -1, d_model)  # n_head x (mb_size*len_k) x d_model
+        # v_s = v.expand(n_head*mb_size, len_v, d_model).view(n_head, -1, d_model)  # n_head x (mb_size*len_v) x d_model
 
         # treat the result as a (n_head * mb_size) size batch
         q_s = torch.bmm(q_s, self.w_qs).view(-1, len_q, d_k)   # (n_head*mb_size) x len_q x d_k

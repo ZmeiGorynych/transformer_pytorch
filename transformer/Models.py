@@ -4,7 +4,7 @@ import torch.nn as nn
 import numpy as np
 import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear
-from transformer.Layers import EncoderLayer, DecoderLayer
+from transformer.Layers import EncoderLayer, DecoderLayer, DecoderStepLayer
 
 __author__ = "Yu-Hsiang Huang"
 
@@ -139,6 +139,93 @@ class Decoder(nn.Module):
         else:
             return dec_output,
 
+class SelfAttentionDecoderStep(nn.Module):
+    ''' One continuous step of the decoder '''
+    def __init__(self,
+                 num_actions,
+                 max_seq_len,
+                 n_layers=6,
+                 n_head=8,
+                 d_k=64,
+                 d_v=64,
+                 d_model=512,
+                 d_inner_hid=1024,
+                 drop_rate=0.1):
+
+        super(Decoder, self).__init__()
+        n_position = max_seq_len #+ 1 Why the +1?
+        self.n_max_seq = max_seq_len
+        self.d_model = d_model
+
+        # TODO: why not make it an explicit function, don't have to worry about non-trainable params
+        self.position_enc = nn.Embedding(n_position, d_model, padding_idx=Constants.PAD)
+        self.position_enc.weight.data = position_encoding_init(n_position, d_model)
+
+        # TODO: do we want relu after embedding? Probably not; make consistent
+        self.embedder = nn.Embedding(
+            num_actions, d_model, padding_idx=Constants.PAD) # Assume the padding index is the max possible?
+        self.dropout = nn.Dropout(drop_rate)
+
+        self.layer_stack = nn.ModuleList([
+            DecoderStepLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=drop_rate)
+            for _ in range(n_layers)])
+
+    def forward(self, enc_output, last_action, last_action_pos = None, src_seq=None, return_attns=False):
+        '''
+        Does one continuous step of the decoder, waiting for a policy to then pick an action from
+        its output and call it again
+        :param last_action: batch x num_actions last action taken
+        :param last_action_pos: batch of ints: number of last action
+        :param enc_output: either batch x z_size or batch x max_input_seq_len x z_size, encoder output
+        :param src_seq: if enc_output is 2-dim, ignored; else used to check for padding, to make padding mask
+        :param return_attns:
+        :return:
+        '''
+        last_action = torch.unsqueeze(last_action, 1)
+
+        if len(enc_output.shape)==2:
+            enc_output = torch.unsqueeze(enc_output,1) # make encoded vector look like a sequence
+            # TODO: check that mask convention is 1 = mask, 0=leave
+            # as each enc_input sequence has length 1, don't need to mask
+            dec_enc_attn_pad_mask = torch.zeros_like(enc_output)
+        else:
+            dec_enc_attn_pad_mask = get_attn_padding_mask(last_action, src_seq)
+
+
+        # Word embedding look up
+        dec_input = self.embedder(last_action)
+
+        # Position Encoding addition
+        if last_action_pos != None:
+            last_action_pos = torch.unsqueeze(last_action_pos, 1)
+            dec_input += self.position_enc(last_action_pos)
+            # Decode
+        dec_slf_attn_pad_mask = get_attn_padding_mask(last_action, last_action)
+
+        if return_attns:
+            dec_slf_attns, dec_enc_attns = [], []
+
+        dec_output = dec_input
+        for dec_layer in self.layer_stack:
+            dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
+                dec_output, enc_output,
+                slf_attn_mask=dec_slf_attn_pad_mask,
+                dec_enc_attn_mask=dec_enc_attn_pad_mask)
+
+            if return_attns:
+                dec_slf_attns += [dec_slf_attn]
+                dec_enc_attns += [dec_enc_attn]
+
+        # As the output 'sequence' only contains one step, get rid of that dimension
+        if return_attns:
+            return dec_output[:,0,:], dec_slf_attns, dec_enc_attns
+        else:
+            return dec_output[:,0,:]
+
+    def reset_state(self):
+        for m in self.layer_stack:
+            m.reset_state()
+
 class Transformer(nn.Module):
     ''' A sequence to sequence model with attention mechanism. '''
 
@@ -175,6 +262,7 @@ class Transformer(nn.Module):
             "To share word embedding table, the vocabulary size of src/tgt shall be the same."
             self.encoder.src_word_emb.weight = self.decoder.tgt_word_emb.weight
 
+    #TODO: do we need this? Or just set requires_grad to False, or not even register them as params!
     def get_trainable_parameters(self):
         ''' Avoid updating the position encoding '''
         enc_freezed_param_ids = set(map(id, self.encoder.position_enc.parameters()))
