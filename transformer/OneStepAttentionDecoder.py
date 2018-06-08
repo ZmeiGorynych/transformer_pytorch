@@ -31,74 +31,17 @@ def get_attn_padding_mask(seq_q, seq_k, num_actions=Constants.PAD):
     return pad_attn_mask
 
 
-
-# class Decoder(nn.Module):
-#     ''' A decoder model with self attention mechanism. '''
-#     def __init__(
-#             self, n_tgt_vocab, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-#             d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1):
-#
-#         super(Decoder, self).__init__()
-#         n_position = n_max_seq + 1
-#         self.n_max_seq = n_max_seq
-#         self.d_model = d_model
-#
-#         self.position_enc = nn.Embedding(
-#             n_position, d_word_vec, padding_idx=Constants.PAD)
-#         self.position_enc.weight.data = position_encoding_init(n_position, d_word_vec)
-#
-#         self.tgt_word_emb = nn.Embedding(
-#             n_tgt_vocab, d_word_vec, padding_idx=Constants.PAD)
-#         self.dropout = nn.Dropout(dropout)
-#
-#         self.layer_stack = nn.ModuleList([
-#             DecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout)
-#             for _ in range(n_layers)])
-#
-#     def forward(self, tgt_seq, tgt_pos, src_seq, enc_output, return_attns=False):
-#         # Word embedding look up
-#         dec_input = self.tgt_word_emb(tgt_seq)
-#
-#         # Position Encoding addition
-#         dec_input += self.position_enc(tgt_pos)
-#
-#         # Decode
-#         dec_slf_attn_pad_mask = get_attn_padding_mask(tgt_seq, tgt_seq)
-#         dec_slf_attn_sub_mask = get_attn_subsequent_mask(tgt_seq)
-#         dec_slf_attn_mask = torch.gt(dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
-#
-#         dec_enc_attn_pad_mask = get_attn_padding_mask(tgt_seq, src_seq)
-#
-#         if return_attns:
-#             dec_slf_attns, dec_enc_attns = [], []
-#
-#         dec_output = dec_input
-#         for dec_layer in self.layer_stack:
-#             dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
-#                 dec_output, enc_output,
-#                 slf_attn_mask=dec_slf_attn_mask,
-#                 dec_enc_attn_mask=dec_enc_attn_pad_mask)
-#
-#             if return_attns:
-#                 dec_slf_attns += [dec_slf_attn]
-#                 dec_enc_attns += [dec_enc_attn]
-#
-#         if return_attns:
-#             return dec_output, dec_slf_attns, dec_enc_attns
-#         else:
-#             return dec_output,
-
 class SelfAttentionDecoderStep(nn.Module):
     ''' One continuous step of the decoder '''
     def __init__(self,
                  num_actions,
                  max_seq_len,
-                 n_layers=2,
-                 n_head=3,#8,
-                 d_k=8,#64,
-                 d_v=8,#64,
-                 d_model=32,#512,
-                 d_inner_hid=32,#1024,
+                 n_layers=3,#6
+                 n_head=5,#8,
+                 d_k=16,#64,
+                 d_v=16,#64,
+                 d_model=128,#512,
+                 d_inner_hid=512,#1024,
                  drop_rate=0.1):
 
         super().__init__()
@@ -146,22 +89,16 @@ class SelfAttentionDecoderStep(nn.Module):
 
         return dec_input
 
-    def forward(self, enc_output, last_action, last_action_pos=None, src_seq=None, return_attns=False):
+    def forward(self, last_action, last_action_pos=None, src_seq=None, return_attns=False):
         '''
         Does one continuous step of the decoder, waiting for a policy to then pick an action from
         its output and call it again
         :param last_action: batch of ints: last action taken
         :param last_action_pos: int: num of steps since last reset
-        :param enc_output: either batch x z_size or batch x max_input_seq_len x z_size, encoder output
         :param src_seq: if enc_output is 2-dim, ignored; else used to check for padding, to make padding mask
         :param return_attns:
         :return:
         '''
-
-        if enc_output.size()[-1] != self.d_model: # make sure encoder output has correct dim
-            if self.enc_output_transform is None:
-                self.enc_output_transform = to_gpu(nn.Linear(enc_output.size()[-1], self.d_model))
-            enc_output = self.enc_output_transform(enc_output)
 
         if last_action_pos >=0:
             last_action = (last_action.unsqueeze(1)).type(LongTensor)
@@ -173,14 +110,6 @@ class SelfAttentionDecoderStep(nn.Module):
         else:
             self.all_actions = torch.cat([self.all_actions,last_action], dim=1)
 
-        if len(enc_output.shape) == 2: # this is the case we support at the moment
-            enc_output = torch.unsqueeze(enc_output, 1)  # make encoded vector look like a sequence
-            # TODO: check that mask convention is 1 = mask, 0=leave
-            # as each enc_input sequence has length 1, don't need to mask
-            dec_enc_attn_pad_mask = torch.zeros(enc_output.size()[0],1,1).type(ByteTensor)
-        else:
-            raise NotImplementedError()
-            #dec_enc_attn_pad_mask = get_attn_padding_mask(last_action, src_seq)
 
         dec_slf_attn_pad_mask = get_attn_padding_mask(last_action, self.all_actions)
 
@@ -188,13 +117,12 @@ class SelfAttentionDecoderStep(nn.Module):
 
         if return_attns:
             dec_slf_attns, dec_enc_attns = [], []
-
-        dec_output = dec_input
+        # TODO: treat new input as a batch of vectors throughout!
+        dec_output = dec_input[:,0,:]
         for dec_layer in self.layer_stack:
-            dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
-                dec_output, enc_output,
-                slf_attn_mask=dec_slf_attn_pad_mask,
-                dec_enc_attn_mask=dec_enc_attn_pad_mask)
+            dec_output, dec_slf_attn, dec_enc_attn = dec_layer(dec_output,
+                                                               slf_attn_mask=dec_slf_attn_pad_mask,
+                                                               dec_enc_attn_mask=self.dec_enc_attn_pad_mask)
 
             if return_attns:
                 dec_slf_attns += [dec_slf_attn]
@@ -202,14 +130,33 @@ class SelfAttentionDecoderStep(nn.Module):
 
         # As the output 'sequence' only contains one step, get rid of that dimension
         if return_attns:
-            return dec_output[:,0,:], dec_slf_attns, dec_enc_attns
+            return dec_output, dec_slf_attns, dec_enc_attns
         else:
-            return self.dec_output_transform(dec_output[:,0,:])
+            return self.dec_output_transform(dec_output)
 
-    def reset_state(self):
+    def init_encoder_output(self, z):
+        self.enc_output = z
+
+        # make sure encoder output has correct dim
+        if self.enc_output.size()[-1] != self.d_model:
+            if self.enc_output_transform is None:
+                self.enc_output_transform = to_gpu(nn.Linear(self.enc_output.size()[-1], self.d_model))
+            self.enc_output = self.enc_output_transform(self.enc_output)
+
+        if len(self.enc_output.shape) == 2:
+            # make encoded vector look like a sequence
+            # this is the case we support at the moment, encoder output is just a vector
+            self.enc_output = torch.unsqueeze(self.enc_output, 1)
+            # TODO: check that mask convention is 1 = mask, 0=leave
+            # as each enc_input sequence has length 1, don't need to mask
+            self.dec_enc_attn_pad_mask = torch.zeros(self.enc_output.size()[0], 1, 1).type(ByteTensor)
+        else:
+            raise NotImplementedError()
+            # dec_enc_attn_pad_mask = get_attn_padding_mask(last_action, src_seq)
+
         self.all_actions = None
         for m in self.layer_stack:
-            m.reset_state()
+            m.init_encoder_output(self.enc_output)
 
 # class Transformer(nn.Module):
 #     ''' A sequence to sequence model with attention mechanism. '''

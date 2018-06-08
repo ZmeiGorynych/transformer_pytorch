@@ -1,7 +1,9 @@
 ''' Define the Layers '''
 import torch.nn as nn
 import torch
-from transformer.SubLayers import MultiHeadAttention, PositionwiseFeedForward
+from transformer.SubLayers import MultiHeadAttention, \
+    MultiHeadAttentionStep, \
+    PositionwiseFeedForward, PositionwiseFeedForwardStep
 
 __author__ = "Yu-Hsiang Huang"
 
@@ -43,24 +45,29 @@ class DecoderStepLayer(nn.Module):
 
     def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1):
         super().__init__()
-        self.slf_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
-        self.enc_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
-        self.pos_ffn = PositionwiseFeedForward(d_model, d_inner_hid, dropout=dropout)
-        self.input_history = None
+        self.enc_attn = MultiHeadAttentionStep(n_head, d_model, d_k, d_v, dropout=dropout)
+        self.slf_attn = MultiHeadAttentionStep(n_head, d_model, d_k, d_v, dropout=dropout)
+        self.pos_ffn = PositionwiseFeedForwardStep(d_model, d_inner_hid, dropout=dropout)
 
-    def forward(self, dec_input, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None):
-        if self.input_history is None:
-            self.input_history = dec_input
-        else:
-            self.input_history = torch.cat([self.input_history, dec_input], 1)
-
-        dec_output, dec_slf_attn = self.slf_attn(
-            dec_input, self.input_history, self.input_history, attn_mask=slf_attn_mask)
-        dec_output, dec_enc_attn = self.enc_attn(
-            dec_output, enc_output, enc_output, attn_mask=dec_enc_attn_mask)
-        dec_output = self.pos_ffn(dec_output)
+    def forward(self, dec_input, slf_attn_mask=None, dec_enc_attn_mask=None):
+        '''
+        One step of a Transformer decoder layer
+        :param dec_input: batch x d_model floats
+        :param slf_attn_mask:
+        :param dec_enc_attn_mask:
+        :return: batch x d_model floats
+        '''
+        dec_output, dec_slf_attn = self.slf_attn(dec_input, attn_mask=slf_attn_mask)
+        dec_output, dec_enc_attn = self.enc_attn(dec_output, attn_mask=dec_enc_attn_mask)
+        # pos_ffn still expects a sequence, though acts on one element at a time, so have to convert
+        dec_output = self.pos_ffn(dec_output.unsqueeze(1)).squeeze(1)
 
         return dec_output, dec_slf_attn, dec_enc_attn
 
-    def reset_state(self):
-        self.input_history = None
+    def init_encoder_output(self, enc_output):
+        # must be called at the start of each sequence, so also before any forward() call
+        self.slf_attn.init_encoder_output(None) # to reset the internal state
+        self.enc_attn.init_encoder_output(enc_output)
+        # pos_ffn let's leave without caching for now
+
+

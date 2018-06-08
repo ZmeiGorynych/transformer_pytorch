@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.init as init
 import numpy as np
+import math
 
 __author__ = "Yu-Hsiang Huang"
 
@@ -71,15 +72,16 @@ class BottleLayerNormalization(BatchBottle, LayerNormalization):
 class ScaledDotProductAttention(nn.Module):
     ''' Scaled Dot-Product Attention '''
 
-    def __init__(self, d_model, attn_dropout=0.1):
+    def __init__(self, attn_dropout=0.1):
         super(ScaledDotProductAttention, self).__init__()
-        self.temper = np.power(d_model, 0.5)
         self.dropout = nn.Dropout(attn_dropout)
         self.softmax = BottleSoftmax()
 
     def forward(self, q, k, v, attn_mask=None):
-
-        attn = torch.bmm(q, k.transpose(1, 2)) / self.temper
+        d_k = k.size()[-1]
+        scaling = 1/math.sqrt(d_k)
+        # output batch_size*n_head x len_q x len_v, as len_k = len_v always
+        attn = torch.bmm(q, k.transpose(1, 2)) * scaling
 
         if attn_mask is not None:
 
@@ -92,6 +94,6 @@ class ScaledDotProductAttention(nn.Module):
 
         attn = self.softmax(attn)
         attn = self.dropout(attn)
-        output = torch.bmm(attn, v)
+        output = torch.bmm(attn, v) # batch_size*n_head x len_q x d_v
 
         return output, attn
