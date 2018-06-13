@@ -6,7 +6,7 @@ import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear
 from transformer.Layers import EncoderLayer, DecoderLayer
 from transformer.DecoderLayerStep import DecoderLayerStep
-from basic_pytorch.gpu_utils import to_gpu, FloatTensor, LongTensor, ByteTensor
+from generative_playground.gpu_utils import to_gpu, FloatTensor, LongTensor, ByteTensor
 
 __author__ = "Yu-Hsiang Huang and Egor Kraev"
 

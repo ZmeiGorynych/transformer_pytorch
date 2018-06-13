@@ -6,7 +6,7 @@ import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear
 from transformer.Layers import EncoderLayer, DecoderLayer
 from transformer.DecoderLayerStep import DecoderLayerStep
-from basic_pytorch.gpu_utils import to_gpu, LongTensor
+from generative_playground.gpu_utils import to_gpu, LongTensor
 
 __author__ = "Yu-Hsiang Huang"
 
@@ -47,7 +47,7 @@ class Encoder(nn.Module):
     def __init__(self,
                  n_src_vocab, # feature_len
                  n_max_seq,
-                 z_size=None,
+                 #z_size=None,
                  n_layers=6,
                  n_head=8,
                  d_k=64,
@@ -64,7 +64,6 @@ class Encoder(nn.Module):
         n_position = n_max_seq + 1
         self.n_max_seq = n_max_seq
         self.d_model = d_model
-        self.z_size = z_size
 
         self.position_enc = nn.Embedding(n_position, d_word_vec, padding_idx=padding_idx)
         self.position_enc.weight.data = position_encoding_init(n_position, d_word_vec)
@@ -75,16 +74,18 @@ class Encoder(nn.Module):
             EncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-        if z_size is not None:
-            self.z_enc = nn.Linear(d_model, z_size)
+        self.output_shape = [None, n_max_seq, d_model]
+
+        # if z_size is not None:
+        #     self.z_enc = nn.Linear(d_model, z_size)
 
     def forward(self, src_seq, src_pos=None, return_attns=False):
         '''
 
-        :param src_seq: batch_size x seq_len x feature_len one-hot or batch_size x seq_len ints
+        :param src_seq: batch_size x seq_len x feature_len float (eg one-hot) or batch_size x seq_len ints
         :param src_pos: batch_size x seq_len ints, optional
         :param return_attns:
-        :return:
+        :return: batch_size x n_max_seq x d_model
         '''
         batch_size = src_seq.size()[0]
         seq_len = src_seq.size()[1]
@@ -110,8 +111,8 @@ class Encoder(nn.Module):
             if return_attns:
                 enc_slf_attns += [enc_slf_attn]
 
-        if self.z_size is not None:
-            enc_output = self.z_enc(enc_output.view(batch_size*seq_len,-1)).view(batch_size,seq_len,-1)
+        # if self.z_size is not None:
+        #     enc_output = self.z_enc(enc_output.view(batch_size*seq_len,-1)).view(batch_size,seq_len,-1)
 
         if return_attns:
             return enc_output, enc_slf_attns
