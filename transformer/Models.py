@@ -4,7 +4,9 @@ import torch.nn as nn
 import numpy as np
 import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear
-from transformer.Layers import EncoderLayer, DecoderLayer, DecoderStepLayer
+from transformer.Layers import EncoderLayer, DecoderLayer
+from transformer.DecoderLayerStep import DecoderLayerStep
+from basic_pytorch.gpu_utils import to_gpu, LongTensor
 
 __author__ = "Yu-Hsiang Huang"
 
@@ -20,12 +22,12 @@ def position_encoding_init(n_position, d_pos_vec):
     position_enc[1:, 1::2] = np.cos(position_enc[1:, 1::2]) # dim 2i+1
     return torch.from_numpy(position_enc).type(torch.FloatTensor)
 
-def get_attn_padding_mask(seq_q, seq_k):
+def get_attn_padding_mask(seq_q, seq_k, num_actions=Constants.PAD):
     ''' Indicate the padding-related part to mask '''
     assert seq_q.dim() == 2 and seq_k.dim() == 2
     mb_size, len_q = seq_q.size()
     mb_size, len_k = seq_k.size()
-    pad_attn_mask = seq_k.data.eq(Constants.PAD).unsqueeze(1)   # bx1xsk
+    pad_attn_mask = seq_k.data.eq(num_actions).unsqueeze(1)   # bx1xsk
     pad_attn_mask = pad_attn_mask.expand(mb_size, len_q, len_k) # bxsqxsk
     return pad_attn_mask
 
@@ -42,28 +44,58 @@ def get_attn_subsequent_mask(seq):
 class Encoder(nn.Module):
     ''' A encoder model with self attention mechanism. '''
 
-    def __init__(
-            self, n_src_vocab, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1):
+    def __init__(self,
+                 n_src_vocab, # feature_len
+                 n_max_seq,
+                 z_size=None,
+                 n_layers=6,
+                 n_head=8,
+                 d_k=64,
+                 d_v=64,
+                 d_word_vec=512,
+                 d_model=512,
+                 d_inner_hid=1024,
+                 dropout=0.1,
+                 padding_idx=Constants.PAD # TODO: remember to set this to n_src_vocab-1 when calling from my code!
+                 ):
 
         super(Encoder, self).__init__()
 
         n_position = n_max_seq + 1
         self.n_max_seq = n_max_seq
         self.d_model = d_model
+        self.z_size = z_size
 
-        self.position_enc = nn.Embedding(n_position, d_word_vec, padding_idx=Constants.PAD)
+        self.position_enc = nn.Embedding(n_position, d_word_vec, padding_idx=padding_idx)
         self.position_enc.weight.data = position_encoding_init(n_position, d_word_vec)
 
-        self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=Constants.PAD)
+        self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=padding_idx)
 
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-    def forward(self, src_seq, src_pos, return_attns=False):
+        if z_size is not None:
+            self.z_enc = nn.Linear(d_model, z_size)
+
+    def forward(self, src_seq, src_pos=None, return_attns=False):
+        '''
+
+        :param src_seq: batch_size x seq_len x feature_len one-hot or batch_size x seq_len ints
+        :param src_pos: batch_size x seq_len ints, optional
+        :param return_attns:
+        :return:
+        '''
+        batch_size = src_seq.size()[0]
+        seq_len = src_seq.size()[1]
+        if len(src_seq.size()) == 3: # if got a one-hot encoded vector
+            src_seq = torch.max(src_seq,2)[-1] # argmax
+
         # Word embedding look up
         enc_input = self.src_word_emb(src_seq)
+        if src_pos == None:
+            src_pos = to_gpu(torch.arange(seq_len).unsqueeze(0).expand(batch_size,seq_len).type(LongTensor))
+
 
         # Position Encoding addition
         enc_input += self.position_enc(src_pos)
@@ -77,6 +109,9 @@ class Encoder(nn.Module):
                 enc_output, slf_attn_mask=enc_slf_attn_mask)
             if return_attns:
                 enc_slf_attns += [enc_slf_attn]
+
+        if self.z_size is not None:
+            enc_output = self.z_enc(enc_output.view(batch_size*seq_len,-1)).view(batch_size,seq_len,-1)
 
         if return_attns:
             return enc_output, enc_slf_attns
@@ -139,92 +174,6 @@ class Decoder(nn.Module):
         else:
             return dec_output,
 
-class SelfAttentionDecoderStep(nn.Module):
-    ''' One continuous step of the decoder '''
-    def __init__(self,
-                 num_actions,
-                 max_seq_len,
-                 n_layers=6,
-                 n_head=8,
-                 d_k=64,
-                 d_v=64,
-                 d_model=512,
-                 d_inner_hid=1024,
-                 drop_rate=0.1):
-
-        super(Decoder, self).__init__()
-        n_position = max_seq_len #+ 1 Why the +1?
-        self.n_max_seq = max_seq_len
-        self.d_model = d_model
-
-        # TODO: why not make it an explicit function, don't have to worry about non-trainable params
-        self.position_enc = nn.Embedding(n_position, d_model, padding_idx=Constants.PAD)
-        self.position_enc.weight.data = position_encoding_init(n_position, d_model)
-
-        # TODO: do we want relu after embedding? Probably not; make consistent
-        self.embedder = nn.Embedding(
-            num_actions, d_model, padding_idx=Constants.PAD) # Assume the padding index is the max possible?
-        self.dropout = nn.Dropout(drop_rate)
-
-        self.layer_stack = nn.ModuleList([
-            DecoderStepLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=drop_rate)
-            for _ in range(n_layers)])
-
-    def forward(self, enc_output, last_action, last_action_pos = None, src_seq=None, return_attns=False):
-        '''
-        Does one continuous step of the decoder, waiting for a policy to then pick an action from
-        its output and call it again
-        :param last_action: batch x num_actions last action taken
-        :param last_action_pos: batch of ints: number of last action
-        :param enc_output: either batch x z_size or batch x max_input_seq_len x z_size, encoder output
-        :param src_seq: if enc_output is 2-dim, ignored; else used to check for padding, to make padding mask
-        :param return_attns:
-        :return:
-        '''
-        last_action = torch.unsqueeze(last_action, 1)
-
-        if len(enc_output.shape)==2:
-            enc_output = torch.unsqueeze(enc_output,1) # make encoded vector look like a sequence
-            # TODO: check that mask convention is 1 = mask, 0=leave
-            # as each enc_input sequence has length 1, don't need to mask
-            dec_enc_attn_pad_mask = torch.zeros_like(enc_output)
-        else:
-            dec_enc_attn_pad_mask = get_attn_padding_mask(last_action, src_seq)
-
-
-        # Word embedding look up
-        dec_input = self.embedder(last_action)
-
-        # Position Encoding addition
-        if last_action_pos != None:
-            last_action_pos = torch.unsqueeze(last_action_pos, 1)
-            dec_input += self.position_enc(last_action_pos)
-            # Decode
-        dec_slf_attn_pad_mask = get_attn_padding_mask(last_action, last_action)
-
-        if return_attns:
-            dec_slf_attns, dec_enc_attns = [], []
-
-        dec_output = dec_input
-        for dec_layer in self.layer_stack:
-            dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
-                dec_output, enc_output,
-                slf_attn_mask=dec_slf_attn_pad_mask,
-                dec_enc_attn_mask=dec_enc_attn_pad_mask)
-
-            if return_attns:
-                dec_slf_attns += [dec_slf_attn]
-                dec_enc_attns += [dec_enc_attn]
-
-        # As the output 'sequence' only contains one step, get rid of that dimension
-        if return_attns:
-            return dec_output[:,0,:], dec_slf_attns, dec_enc_attns
-        else:
-            return dec_output[:,0,:]
-
-    def reset_state(self):
-        for m in self.layer_stack:
-            m.reset_state()
 
 class Transformer(nn.Module):
     ''' A sequence to sequence model with attention mechanism. '''

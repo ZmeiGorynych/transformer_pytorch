@@ -4,7 +4,8 @@ import torch.nn as nn
 import numpy as np
 import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear
-from transformer.Layers import EncoderLayer, DecoderLayer, DecoderStepLayer
+from transformer.Layers import EncoderLayer, DecoderLayer
+from transformer.DecoderLayerStep import DecoderLayerStep
 from basic_pytorch.gpu_utils import to_gpu, FloatTensor, LongTensor, ByteTensor
 
 __author__ = "Yu-Hsiang Huang and Egor Kraev"
@@ -61,7 +62,7 @@ class SelfAttentionDecoderStep(nn.Module):
         self.dropout = nn.Dropout(drop_rate)
 
         self.layer_stack = nn.ModuleList([
-            DecoderStepLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=drop_rate)
+            DecoderLayerStep(d_model, d_inner_hid, n_head, d_k, d_v, dropout=drop_rate)
             for _ in range(n_layers)])
 
         self.enc_output_transform = None # will need to convert encoder output to d_model
