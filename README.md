@@ -1,3 +1,11 @@
+This is a rather refactored version of https://github.com/jadore801120/attention-is-all-you-need-pytorch
+The biggest change is making the decoder cache intermediate results at each decoder step, so we don't have to re-process earlier inputs and outputs, leading to substantial RAM and speed improvements. 
+
+Other changes mostly have to do with making these models work with the autoencoder and reinforcement learning setups of mine, very much a work in progress
+
+
+*************************
+
 # Attention is all you need: A Pytorch Implementation
 
 This is a PyTorch implementation of the Transformer model in "[Attention is All You Need](https://arxiv.org/abs/1706.03762)" (Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin, arxiv, 2017). 
