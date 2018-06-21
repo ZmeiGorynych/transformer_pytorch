@@ -47,10 +47,9 @@ class SelfAttentionDecoderStep(nn.Module):
 
         super().__init__()
         n_position = max_seq_len + 1 # Why the +1? Because of the dummy prev action for first step
-        self.n_max_seq = max_seq_len
+        self.max_seq_len = max_seq_len
         self.d_model = d_model
 
-        ## TODO: why not make it an explicit function, don't have to worry about non-trainable params
         self.position_enc = nn.Embedding(n_position, d_model, padding_idx=Constants.PAD)
         self.position_enc.weight.data = position_encoding_init(n_position, d_model)
         self.position_enc.weight.requires_grad = False # will this suffice to make them not trainable?
@@ -90,31 +89,40 @@ class SelfAttentionDecoderStep(nn.Module):
 
         return dec_input
 
-    def forward(self, last_action, last_action_pos=None, src_seq=None, return_attns=False):
+    def forward(self, last_action,
+                #last_action_pos=None,
+                src_seq=None,
+                return_attns=False):
         '''
         Does one continuous step of the decoder, waiting for a policy to then pick an action from
         its output and call it again
         :param last_action: batch of ints: last action taken
-        :param last_action_pos: int: num of steps since last reset
+        :param last_action_pos: int: num of steps since last reset, is 0 when this is the first action!
         :param src_seq: if enc_output is 2-dim, ignored; else used to check for padding, to make padding mask
         :param return_attns:
         :return:
         '''
+        # control that we don't exceed
+        if self.n == self.max_seq_len:
+            raise StopIteration()
+        self.n+=1
 
-        if last_action_pos >=0:
-            last_action = (last_action.unsqueeze(1)).type(LongTensor)
-        else:
-            last_action = ((torch.ones(len(last_action), 1)) * -1).type(LongTensor)
+        # if last_action_pos >=0:
+        #     last_action = (last_action.unsqueeze(1)).type(LongTensor)
+        # else:
+        #     last_action = ((torch.ones(len(last_action), 1)) * -1).type(LongTensor)
+
+        last_action = (last_action.unsqueeze(1)).type(LongTensor)
 
         if self.all_actions is None:
             self.all_actions = last_action
         else:
             self.all_actions = torch.cat([self.all_actions,last_action], dim=1)
 
-
         dec_slf_attn_pad_mask = get_attn_padding_mask(last_action, self.all_actions)
 
-        dec_input = self.encode(last_action, last_action_pos)
+        #TODO: double-check, is this legit?
+        dec_input = self.encode(last_action, self.n)# last_action_pos)
 
         if return_attns:
             dec_slf_attns, dec_enc_attns = [], []
@@ -136,7 +144,9 @@ class SelfAttentionDecoderStep(nn.Module):
             return self.dec_output_transform(dec_output)
 
     def init_encoder_output(self, z):
+        self.z_size = z.size()[-1]
         self.enc_output = z
+        self.n = 0
 
         # make sure encoder output has correct dim
         if self.enc_output.size()[-1] != self.d_model:
