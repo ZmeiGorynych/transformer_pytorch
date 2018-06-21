@@ -1,6 +1,7 @@
 ''' Define the Layers '''
 import torch.nn as nn
-from transformer.SubLayers import MultiHeadAttention, PositionwiseFeedForward
+from transformer.SubLayers import MultiHeadAttention, \
+    PositionwiseFeedForward
 
 __author__ = "Yu-Hsiang Huang"
 
@@ -36,3 +37,5 @@ class DecoderLayer(nn.Module):
         dec_output = self.pos_ffn(dec_output)
 
         return dec_output, dec_slf_attn, dec_enc_attn
+
+

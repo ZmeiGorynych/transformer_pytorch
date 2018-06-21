@@ -5,6 +5,8 @@ import numpy as np
 import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear
 from transformer.Layers import EncoderLayer, DecoderLayer
+from transformer.DecoderLayerStep import DecoderLayerStep
+from generative_playground.gpu_utils import to_gpu, LongTensor
 
 __author__ = "Yu-Hsiang Huang"
 
@@ -20,12 +22,12 @@ def position_encoding_init(n_position, d_pos_vec):
     position_enc[1:, 1::2] = np.cos(position_enc[1:, 1::2]) # dim 2i+1
     return torch.from_numpy(position_enc).type(torch.FloatTensor)
 
-def get_attn_padding_mask(seq_q, seq_k):
+def get_attn_padding_mask(seq_q, seq_k, num_actions=Constants.PAD):
     ''' Indicate the padding-related part to mask '''
     assert seq_q.dim() == 2 and seq_k.dim() == 2
     mb_size, len_q = seq_q.size()
     mb_size, len_k = seq_k.size()
-    pad_attn_mask = seq_k.data.eq(Constants.PAD).unsqueeze(1)   # bx1xsk
+    pad_attn_mask = seq_k.data.eq(num_actions).unsqueeze(1)   # bx1xsk
     pad_attn_mask = pad_attn_mask.expand(mb_size, len_q, len_k) # bxsqxsk
     return pad_attn_mask
 
@@ -42,9 +44,20 @@ def get_attn_subsequent_mask(seq):
 class Encoder(nn.Module):
     ''' A encoder model with self attention mechanism. '''
 
-    def __init__(
-            self, n_src_vocab, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1):
+    def __init__(self,
+                 n_src_vocab, # feature_len
+                 n_max_seq,
+                 #z_size=None,
+                 n_layers=6,
+                 n_head=8,
+                 d_k=64,
+                 d_v=64,
+                 d_word_vec=512,
+                 d_model=512,
+                 d_inner_hid=1024,
+                 dropout=0.1,
+                 padding_idx=Constants.PAD # TODO: remember to set this to n_src_vocab-1 when calling from my code!
+                 ):
 
         super(Encoder, self).__init__()
 
@@ -52,18 +65,38 @@ class Encoder(nn.Module):
         self.n_max_seq = n_max_seq
         self.d_model = d_model
 
-        self.position_enc = nn.Embedding(n_position, d_word_vec, padding_idx=Constants.PAD)
+        self.position_enc = nn.Embedding(n_position, d_word_vec, padding_idx=padding_idx)
         self.position_enc.weight.data = position_encoding_init(n_position, d_word_vec)
 
-        self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=Constants.PAD)
+        self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=padding_idx)
 
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-    def forward(self, src_seq, src_pos, return_attns=False):
+        self.output_shape = [None, n_max_seq, d_model]
+
+        # if z_size is not None:
+        #     self.z_enc = nn.Linear(d_model, z_size)
+
+    def forward(self, src_seq, src_pos=None, return_attns=False):
+        '''
+
+        :param src_seq: batch_size x seq_len x feature_len float (eg one-hot) or batch_size x seq_len ints
+        :param src_pos: batch_size x seq_len ints, optional
+        :param return_attns:
+        :return: batch_size x n_max_seq x d_model
+        '''
+        batch_size = src_seq.size()[0]
+        seq_len = src_seq.size()[1]
+        if len(src_seq.size()) == 3: # if got a one-hot encoded vector
+            src_seq = torch.max(src_seq,2)[-1] # argmax
+
         # Word embedding look up
         enc_input = self.src_word_emb(src_seq)
+        if src_pos == None:
+            src_pos = to_gpu(torch.arange(seq_len).unsqueeze(0).expand(batch_size,seq_len).type(LongTensor))
+
 
         # Position Encoding addition
         enc_input += self.position_enc(src_pos)
@@ -77,6 +110,9 @@ class Encoder(nn.Module):
                 enc_output, slf_attn_mask=enc_slf_attn_mask)
             if return_attns:
                 enc_slf_attns += [enc_slf_attn]
+
+        # if self.z_size is not None:
+        #     enc_output = self.z_enc(enc_output.view(batch_size*seq_len,-1)).view(batch_size,seq_len,-1)
 
         if return_attns:
             return enc_output, enc_slf_attns
@@ -139,6 +175,7 @@ class Decoder(nn.Module):
         else:
             return dec_output,
 
+
 class Transformer(nn.Module):
     ''' A sequence to sequence model with attention mechanism. '''
 
@@ -175,6 +212,7 @@ class Transformer(nn.Module):
             "To share word embedding table, the vocabulary size of src/tgt shall be the same."
             self.encoder.src_word_emb.weight = self.decoder.tgt_word_emb.weight
 
+    #TODO: do we need this? Or just set requires_grad to False, or not even register them as params!
     def get_trainable_parameters(self):
         ''' Avoid updating the position encoding '''
         enc_freezed_param_ids = set(map(id, self.encoder.position_enc.parameters()))
