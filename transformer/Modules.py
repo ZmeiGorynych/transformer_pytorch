@@ -91,9 +91,12 @@ class ScaledDotProductAttention(nn.Module):
                     '{}.'.format(attn_mask.size(), attn.size())
 
             attn.data.masked_fill_(attn_mask, -float('inf'))
+        if attn.size()[2] > 1:
+            attn = self.softmax(attn)
+            attn = self.dropout(attn)
+        else: # if only have one value, don't want to weight
+            attn = torch.ones_like(attn)
 
-        attn = self.softmax(attn)
-        attn = self.dropout(attn)
         output = torch.bmm(attn, v) # batch_size*n_head x len_q x d_v
 
         return output, attn
