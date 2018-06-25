@@ -67,6 +67,7 @@ class SelfAttentionDecoderStep(nn.Module):
         self.enc_output_transform = None # will need to convert encoder output to d_model
         self.dec_output_transform = to_gpu(nn.Linear(self.d_model, num_actions))
         self.all_actions = None
+        self.output_shape = [None, self.max_seq_len, self.d_model]
 
     def encode(self, last_action, last_action_pos):
         '''
