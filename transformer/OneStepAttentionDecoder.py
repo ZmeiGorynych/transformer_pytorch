@@ -139,8 +139,8 @@ class SelfAttentionDecoderStep(nn.Module):
             if return_attns:
                 dec_slf_attns += [dec_slf_attn]
                 dec_enc_attns += [dec_enc_attn]
-
-        self.n += 1
+        if remember_step:
+            self.n += 1
         # As the output 'sequence' only contains one step, get rid of that dimension
         if return_attns:
             return self.dec_output_transform(dec_output), dec_slf_attns, dec_enc_attns
