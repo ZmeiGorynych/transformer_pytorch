@@ -14,7 +14,7 @@ class DecoderLayerStep(nn.Module):
         self.slf_attn = MultiHeadAttentionStep(n_head, d_model, d_k, d_v, dropout=dropout)
         self.pos_ffn = PositionwiseFeedForwardStep(d_model, d_inner_hid, dropout=dropout)
 
-    def forward(self, dec_input, slf_attn_mask=None, dec_enc_attn_mask=None):
+    def forward(self, dec_input, slf_attn_mask=None, dec_enc_attn_mask=None,remember_step=True):
         '''
         One step of a Transformer decoder layer
         :param dec_input: batch x d_model floats
@@ -22,8 +22,8 @@ class DecoderLayerStep(nn.Module):
         :param dec_enc_attn_mask:
         :return: batch x d_model floats
         '''
-        dec_output, dec_slf_attn = self.slf_attn(dec_input, attn_mask=slf_attn_mask)
-        dec_output, dec_enc_attn = self.enc_attn(dec_output, attn_mask=dec_enc_attn_mask)
+        dec_output, dec_slf_attn = self.slf_attn(dec_input, attn_mask=slf_attn_mask,remember_step=remember_step)
+        dec_output, dec_enc_attn = self.enc_attn(dec_output, attn_mask=dec_enc_attn_mask,remember_step=remember_step)
         # pos_ffn still expects a sequence, though acts on one element at a time, so have to convert
         dec_output = self.pos_ffn(dec_output.unsqueeze(1)).squeeze(1)
 
@@ -104,11 +104,12 @@ class MultiHeadAttentionStep(nn.Module):
         return q, k, v
 
 
-    def forward(self, x, attn_mask=None):
+    def forward(self, x, attn_mask=None, remember_step=True):
         '''
         Calculates attention-based output from the next input, caching intermediate results
         :param x: batch_size x d_model
         :param attn_mask:
+        :param remember_step: whether to add the last input to input cache
         :return: output same dimension as x
         '''
 
@@ -117,12 +118,15 @@ class MultiHeadAttentionStep(nn.Module):
         q, k, v = self.vec_to_qkv(x)
         q_s = q #n_head*batch_size x 1 x d_q
 
-        if self.enc_output is None:
+        if self.enc_output is None: # this is the self-attention part
             # append the new k, v to the array so far
             self.dec_k.append(k)
             self.dec_v.append(v)
             k_s = torch.cat(self.dec_k,1)  # n_head*batch_size x len_k x d_k
             v_s = torch.cat(self.dec_v,1)  # n_head*batch_size x len_v x d_v
+            if not remember_step:
+                self.dec_k.pop[-1]
+                self.dec_v.pop[-1]
         else: # use the pre-calc'd values
             k_s = self.enc_k
             v_s = self.enc_v

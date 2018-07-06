@@ -67,7 +67,7 @@ class SelfAttentionDecoderStep(nn.Module):
         self.enc_output_transform = None # will need to convert encoder output to d_model
         self.dec_output_transform = to_gpu(nn.Linear(self.d_model, num_actions))
         self.all_actions = None
-        self.output_shape = [None, self.max_seq_len, self.d_model]
+        self.output_shape = [None, self.max_seq_len, num_actions]
 
     def encode(self, last_action, last_action_pos):
         '''
@@ -93,7 +93,8 @@ class SelfAttentionDecoderStep(nn.Module):
     def forward(self, last_action,
                 #last_action_pos=None,
                 src_seq=None,
-                return_attns=False):
+                return_attns=False,
+                remember_step=True):
         '''
         Does one continuous step of the decoder, waiting for a policy to then pick an action from
         its output and call it again
@@ -132,7 +133,8 @@ class SelfAttentionDecoderStep(nn.Module):
         for dec_layer in self.layer_stack:
             dec_output, dec_slf_attn, dec_enc_attn = dec_layer(dec_output,
                                                                slf_attn_mask=dec_slf_attn_pad_mask,
-                                                               dec_enc_attn_mask=self.dec_enc_attn_pad_mask)
+                                                               dec_enc_attn_mask=self.dec_enc_attn_pad_mask,
+                                                               remember_step=remember_step)
 
             if return_attns:
                 dec_slf_attns += [dec_slf_attn]
@@ -141,7 +143,7 @@ class SelfAttentionDecoderStep(nn.Module):
         self.n += 1
         # As the output 'sequence' only contains one step, get rid of that dimension
         if return_attns:
-            return dec_output, dec_slf_attns, dec_enc_attns
+            return self.dec_output_transform(dec_output), dec_slf_attns, dec_enc_attns
         else:
             return self.dec_output_transform(dec_output)
 
