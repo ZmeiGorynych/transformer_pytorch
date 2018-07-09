@@ -37,11 +37,11 @@ class SelfAttentionDecoderStep(nn.Module):
     def __init__(self,
                  num_actions,
                  max_seq_len,
-                 n_layers=3,#6
-                 n_head=5,#8,
-                 d_k=16,#64,
-                 d_v=16,#64,
-                 d_model=128,#512,
+                 n_layers=6,#6
+                 n_head=8,#8,
+                 d_k=32,#64,
+                 d_v=32,#64,
+                 d_model=256,#512,
                  d_inner_hid=512,#1024,
                  drop_rate=0.1):
 

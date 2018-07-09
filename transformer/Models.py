@@ -48,13 +48,13 @@ class Encoder(nn.Module):
                  n_src_vocab, # feature_len
                  n_max_seq,
                  #z_size=None,
-                 n_layers=6,
-                 n_head=8,
-                 d_k=64,
-                 d_v=64,
-                 d_word_vec=512,
-                 d_model=512,
-                 d_inner_hid=1024,
+                 n_layers=6,#6,
+                 n_head=8,#8,
+                 d_k=32,#64,
+                 d_v=32,#64,
+                 d_word_vec=256,#512,
+                 d_model=256,#512,
+                 d_inner_hid=512,#1024,
                  dropout=0.1,
                  padding_idx=Constants.PAD # TODO: remember to set this to n_src_vocab-1 when calling from my code!
                  ):
