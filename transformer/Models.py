@@ -5,8 +5,7 @@ import numpy as np
 import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear
 from transformer.Layers import EncoderLayer, DecoderLayer
-from transformer.DecoderLayerStep import DecoderLayerStep
-from generative_playground.gpu_utils import to_gpu, LongTensor
+from generative_playground.utils.gpu_utils import to_gpu, LongTensor
 
 __author__ = "Yu-Hsiang Huang"
 
@@ -47,14 +46,13 @@ class Encoder(nn.Module):
     def __init__(self,
                  n_src_vocab, # feature_len
                  n_max_seq,
-                 #z_size=None,
                  n_layers=6,#6,
-                 n_head=8,#8,
-                 d_k=32,#64,
-                 d_v=32,#64,
-                 d_word_vec=256,#512,
-                 d_model=256,#512,
-                 d_inner_hid=512,#1024,
+                 n_head=6,#8,
+                 d_k=16,#64,
+                 d_v=16,#64,
+                 d_word_vec=128,#512,
+                 d_model=128,#512,
+                 d_inner_hid=256,#1024,
                  dropout=0.1,
                  padding_idx=Constants.PAD # TODO: remember to set this to n_src_vocab-1 when calling from my code!
                  ):

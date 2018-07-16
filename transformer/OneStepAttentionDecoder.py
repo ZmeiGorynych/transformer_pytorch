@@ -3,10 +3,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 import transformer.Constants as Constants
-from transformer.Modules import BottleLinear as Linear
-from transformer.Layers import EncoderLayer, DecoderLayer
 from transformer.DecoderLayerStep import DecoderLayerStep
-from generative_playground.gpu_utils import to_gpu, FloatTensor, LongTensor, ByteTensor
+from generative_playground.utils.gpu_utils import to_gpu, FloatTensor, LongTensor, ByteTensor
 
 __author__ = "Yu-Hsiang Huang and Egor Kraev"
 
@@ -38,12 +36,13 @@ class SelfAttentionDecoderStep(nn.Module):
                  num_actions,
                  max_seq_len,
                  n_layers=6,#6
-                 n_head=8,#8,
-                 d_k=32,#64,
-                 d_v=32,#64,
-                 d_model=256,#512,
-                 d_inner_hid=512,#1024,
-                 drop_rate=0.1):
+                 n_head=6,#8,
+                 d_k=16,#64,
+                 d_v=16,#64,
+                 d_model=128,#512,
+                 d_inner_hid=256,#1024,
+                 drop_rate=0.1,
+                 enc_output_size=76):
 
         super().__init__()
         n_position = max_seq_len + 1 # Why the +1? Because of the dummy prev action for first step
@@ -63,8 +62,11 @@ class SelfAttentionDecoderStep(nn.Module):
         self.layer_stack = nn.ModuleList([
             DecoderLayerStep(d_model, d_inner_hid, n_head, d_k, d_v, dropout=drop_rate)
             for _ in range(n_layers)])
-
-        self.enc_output_transform = None # will need to convert encoder output to d_model
+        # make sure encoder output has correct dim
+        if enc_output_size != self.d_model:
+            self.enc_output_transform = to_gpu(nn.Linear(enc_output_size, self.d_model))
+        else:
+            self.enc_output_transform = lambda x: x
         self.dec_output_transform = to_gpu(nn.Linear(self.d_model, num_actions))
         self.all_actions = None
         self.output_shape = [None, self.max_seq_len, num_actions]
@@ -149,14 +151,8 @@ class SelfAttentionDecoderStep(nn.Module):
 
     def init_encoder_output(self, z):
         self.z_size = z.size()[-1]
-        self.enc_output = z
         self.n = 0
-
-        # make sure encoder output has correct dim
-        if self.enc_output.size()[-1] != self.d_model:
-            if self.enc_output_transform is None:
-                self.enc_output_transform = to_gpu(nn.Linear(self.enc_output.size()[-1], self.d_model))
-            self.enc_output = self.enc_output_transform(self.enc_output)
+        self.enc_output = self.enc_output_transform(z)
 
         if len(self.enc_output.shape) == 2:
             # make encoded vector look like a sequence
