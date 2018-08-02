@@ -14,7 +14,7 @@ class DecoderLayerStep(nn.Module):
         self.slf_attn = MultiHeadAttentionStep(n_head, d_model, d_k, d_v, dropout=dropout)
         self.pos_ffn = PositionwiseFeedForwardStep(d_model, d_inner_hid, dropout=dropout)
 
-    def forward(self, dec_input, slf_attn_mask=None, dec_enc_attn_mask=None,remember_step=True):
+    def forward(self, dec_input, slf_attn_mask=None, dec_enc_attn_mask=None, remember_step=True):
         '''
         One step of a Transformer decoder layer
         :param dec_input: batch x d_model floats
@@ -22,8 +22,12 @@ class DecoderLayerStep(nn.Module):
         :param dec_enc_attn_mask:
         :return: batch x d_model floats
         '''
+
         dec_output, dec_slf_attn = self.slf_attn(dec_input, attn_mask=slf_attn_mask,remember_step=remember_step)
-        dec_output, dec_enc_attn = self.enc_attn(dec_output, attn_mask=dec_enc_attn_mask,remember_step=remember_step)
+        if self.encoder_output is not None:
+            dec_output, dec_enc_attn = self.enc_attn(dec_output, attn_mask=dec_enc_attn_mask,remember_step=remember_step)
+        else:
+            dec_enc_attn = None
         # pos_ffn still expects a sequence, though acts on one element at a time, so have to convert
         dec_output = self.pos_ffn(dec_output.unsqueeze(1)).squeeze(1)
 
@@ -31,6 +35,7 @@ class DecoderLayerStep(nn.Module):
 
     def init_encoder_output(self, enc_output):
         # must be called at the start of each sequence, so also before any forward() call
+        self.encoder_output = enc_output
         self.slf_attn.init_encoder_output(None) # to reset the internal state
         self.enc_attn.init_encoder_output(enc_output)
         # pos_ffn let's leave without caching for now
