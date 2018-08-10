@@ -11,7 +11,7 @@ class Linear(nn.Module):
     def __init__(self, d_in, d_out, bias=True):
         super(Linear, self).__init__()
         self.linear = nn.Linear(d_in, d_out, bias=bias)
-        init.xavier_normal(self.linear.weight)
+        init.xavier_normal_(self.linear.weight)
 
     def forward(self, x):
         return self.linear(x)
@@ -75,7 +75,7 @@ class ScaledDotProductAttention(nn.Module):
     def __init__(self, attn_dropout=0.1):
         super(ScaledDotProductAttention, self).__init__()
         self.dropout = nn.Dropout(attn_dropout)
-        self.softmax = BottleSoftmax()
+        self.softmax = BottleSoftmax(dim=1)
 
     def forward(self, q, k, v, attn_mask=None):
         d_k = k.size()[-1]

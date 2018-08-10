@@ -69,9 +69,9 @@ class MultiHeadAttentionStep(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-        init.xavier_normal(self.w_qs)
-        init.xavier_normal(self.w_ks)
-        init.xavier_normal(self.w_vs)
+        init.xavier_normal_(self.w_qs)
+        init.xavier_normal_(self.w_ks)
+        init.xavier_normal_(self.w_vs)
 
     def init_encoder_output(self, enc_output):
         """
