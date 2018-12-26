@@ -1,13 +1,16 @@
 ''' Define the Transformer model '''
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
+# from torch._C import device
+
 import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear
 from transformer.Layers import EncoderLayer, DecoderLayer
 from generative_playground.utils.gpu_utils import to_gpu, LongTensor
 
-__author__ = "Yu-Hsiang Huang"
+__author__ = "Yu-Hsiang Huang, much amended by Egor Kraev"
 
 def position_encoding_init(n_position, d_pos_vec):
     ''' Init the sinusoid position encoding table '''
@@ -47,13 +50,15 @@ class Encoder(nn.Module):
                  n_src_vocab, # feature_len
                  n_max_seq,
                  n_layers=6,#6,
-                 n_head=6,#8,
-                 d_k=16,#64,
-                 d_v=16,#64,
-                 d_word_vec=128,#512,
-                 d_model=128,#512,
-                 d_inner_hid=256,#1024,
+                 n_head=8,#6,
+                 d_k=64,#16,
+                 d_v=64,#16,#
+                 d_word_vec=512,#128,#
+                 d_model=512,#128,#
+                 d_inner_hid=1024,#256,#
                  dropout=0.1,
+                 include_self_attention=False,
+                 transpose_self_attention=False,
                  padding_idx=Constants.PAD # TODO: remember to set this to n_src_vocab-1 when calling from my code!
                  ):
 
@@ -62,22 +67,25 @@ class Encoder(nn.Module):
         n_position = n_max_seq + 1
         self.n_max_seq = n_max_seq
         self.d_model = d_model
-
+        self.n_head = n_head
+        self.include_self_attention = include_self_attention
+        self.transpose_self_attention = transpose_self_attention
         self.position_enc = nn.Embedding(n_position, d_word_vec, padding_idx=padding_idx)
         self.position_enc.weight.data = position_encoding_init(n_position, d_word_vec)
 
         self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=padding_idx)
-
+        self.src_vector_fc = nn.Linear(n_src_vocab, d_word_vec)
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
+        self.final_fc = nn.Linear(d_model + n_head*n_max_seq*n_layers, d_model)
 
         self.output_shape = [None, n_max_seq, d_model]
 
         # if z_size is not None:
         #     self.z_enc = nn.Linear(d_model, z_size)
 
-    def forward(self, src_seq, src_pos=None, return_attns=False):
+    def forward(self, src_seq, src_pos=None):
         '''
 
         :param src_seq: batch_size x seq_len x feature_len float (eg one-hot) or batch_size x seq_len ints
@@ -87,35 +95,55 @@ class Encoder(nn.Module):
         '''
         batch_size = src_seq.size()[0]
         seq_len = src_seq.size()[1]
-        if len(src_seq.size()) == 3: # if got a one-hot encoded vector
-            src_seq = torch.max(src_seq,2)[-1] # argmax
 
-        # Word embedding look up
-        enc_input = self.src_word_emb(src_seq)
-        if src_pos == None:
-            src_pos = to_gpu(torch.arange(seq_len).unsqueeze(0).expand(batch_size,seq_len).type(LongTensor))
+        # normalize the input vector:
+        if src_seq.dtype == torch.int64: # indices of discrete actions
+            if len(src_seq.size()) == 3: # if got a one-hot encoded vector
+                src_seq = torch.max(src_seq,2)[-1] # argmax
 
+            # Word embedding look up
+            enc_input = self.src_word_emb(src_seq)
+            src_seq_for_masking = src_seq
+        elif src_seq.dtype == torch.float32 and len(src_seq.size()) == 3: # if the input is continuous
+            enc_input = self.src_vector_fc(src_seq)
+            src_seq_for_masking = torch.ones(src_seq.size()[:2], device=src_seq.device)
 
         # Position Encoding addition
+        if src_pos is None:
+            src_pos = to_gpu(torch.arange(seq_len).unsqueeze(0).expand(batch_size,seq_len).type(LongTensor))
+
         enc_input += self.position_enc(src_pos)
-        if return_attns:
+        if self.include_self_attention:
             enc_slf_attns = []
 
         enc_output = enc_input
-        enc_slf_attn_mask = get_attn_padding_mask(src_seq, src_seq)
+        enc_slf_attn_mask = get_attn_padding_mask(src_seq_for_masking, src_seq_for_masking)
         for enc_layer in self.layer_stack:
             enc_output, enc_slf_attn = enc_layer(
                 enc_output, slf_attn_mask=enc_slf_attn_mask)
-            if return_attns:
+            if self.include_self_attention:
                 enc_slf_attns += [enc_slf_attn]
 
         # if self.z_size is not None:
         #     enc_output = self.z_enc(enc_output.view(batch_size*seq_len,-1)).view(batch_size,seq_len,-1)
 
-        if return_attns:
-            return enc_output, enc_slf_attns
-        else:
-            return enc_output,
+        if self.include_self_attention:
+            nice_attentions = [reshape_self_attention(x,
+                                                      self.n_head,
+                                                      len(enc_output),
+                                                      self.n_max_seq,
+                                                      self.transpose_self_attention) for x in enc_slf_attns]
+            enc_output = torch.cat([enc_output] + nice_attentions, dim=2)
+            enc_output = self.final_fc(F.relu(enc_output))
+
+        return enc_output
+
+def reshape_self_attention(x, n_head, batch_size, n_max_seq, transpose):
+    x1 = x.view(n_head, batch_size, n_max_seq, n_max_seq)
+    if transpose:
+        x1=x1.transpose(2,3)
+    x2 = x1.transpose(0,1).transpose(1,2).contiguous().view(batch_size, n_max_seq, -1)
+    return x2
 
 class Decoder(nn.Module):
     ''' A decoder model with self attention mechanism. '''
