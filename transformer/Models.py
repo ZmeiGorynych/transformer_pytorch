@@ -47,19 +47,19 @@ class Encoder(nn.Module):
     ''' A encoder model with self attention mechanism. '''
 
     def __init__(self,
-                 n_src_vocab, # feature_len
+                 n_src_vocab,  # feature_len
                  n_max_seq,
-                 n_layers=6,#6,
-                 n_head=8,#6,
-                 d_k=64,#16,
-                 d_v=64,#16,#
-                 d_word_vec=512,#128,#
-                 d_model=512,#128,#
-                 d_inner_hid=1024,#256,#
+                 n_layers=6,  #6,
+                 n_head=8,  #6,
+                 d_k=64,  #16,
+                 d_v=64,  #16,#
+                 d_word_vec=512,  #128,#
+                 d_model=512,  #128,#
+                 d_inner_hid=1024,  #256,#
                  dropout=0.1,
-                 include_self_attention=False,
+                 use_self_attention=False,
                  transpose_self_attention=False,
-                 padding_idx=Constants.PAD # TODO: remember to set this to n_src_vocab-1 when calling from my code!
+                 padding_idx=Constants.PAD  # TODO: remember to set this to n_src_vocab-1 when calling from my code!
                  ):
 
         super(Encoder, self).__init__()
@@ -68,7 +68,7 @@ class Encoder(nn.Module):
         self.n_max_seq = n_max_seq
         self.d_model = d_model
         self.n_head = n_head
-        self.include_self_attention = include_self_attention
+        self.include_self_attention = use_self_attention
         self.transpose_self_attention = transpose_self_attention
         self.position_enc = nn.Embedding(n_position, d_word_vec, padding_idx=padding_idx)
         self.position_enc.weight.data = position_encoding_init(n_position, d_word_vec)
@@ -76,9 +76,17 @@ class Encoder(nn.Module):
         self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=padding_idx)
         self.src_vector_fc = nn.Linear(n_src_vocab, d_word_vec)
         self.layer_stack = nn.ModuleList([
-            EncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout)
+            EncoderLayer(d_model,
+                         d_inner_hid,
+                         n_head,
+                         d_k,
+                         d_v,
+                         dropout=dropout,
+                         n_max_seq=n_max_seq,
+                         use_attentions=use_self_attention)
             for _ in range(n_layers)])
-        self.final_fc = nn.Linear(d_model + n_head*n_max_seq*n_layers, d_model)
+        both_mult = 2 if transpose_self_attention=='both' else 1
+        self.final_fc = nn.Linear(d_model + both_mult*n_head*n_max_seq*n_layers, d_model)
 
         self.output_shape = [None, n_max_seq, d_model]
 
@@ -127,7 +135,7 @@ class Encoder(nn.Module):
         # if self.z_size is not None:
         #     enc_output = self.z_enc(enc_output.view(batch_size*seq_len,-1)).view(batch_size,seq_len,-1)
 
-        if self.include_self_attention:
+        if False:#self.include_self_attention:
             nice_attentions = [reshape_self_attention(x,
                                                       self.n_head,
                                                       len(enc_output),
@@ -140,8 +148,11 @@ class Encoder(nn.Module):
 
 def reshape_self_attention(x, n_head, batch_size, n_max_seq, transpose):
     x1 = x.view(n_head, batch_size, n_max_seq, n_max_seq)
-    if transpose:
-        x1=x1.transpose(2,3)
+    if transpose is True:
+        x1 = x1.transpose(2,3)
+    elif transpose == 'both':
+        x1 = torch.cat([x1, x1.transpose(2, 3)], dim=3)
+
     x2 = x1.transpose(0,1).transpose(1,2).contiguous().view(batch_size, n_max_seq, -1)
     return x2
 
